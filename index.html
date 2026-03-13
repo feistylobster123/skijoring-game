@@ -263,8 +263,8 @@ function createGame() {
     speed: 0,
     maxSpeed: 8,
     accel: 0.03,
-    // Horse
-    horseX: 150,
+    // Horse (leads on right side of screen)
+    horseX: Math.round(W * 0.6),
     horseLane: 1,
     horseY: lanes[1],
     horseBob: 0,
@@ -377,7 +377,7 @@ function update() {
     g.skierJumpVY = JUMP_FORCE;
     g.skierAirborne = true;
     keys[' '] = false;
-    spawnParticles(g.horseX + 120 - g.courseX + g.courseX, g.skierY, 5, '#d0e0f0');
+    spawnParticles(g.horseX - 130, g.skierY, 5, '#d0e0f0');
   }
 
   // Jump physics
@@ -388,7 +388,7 @@ function update() {
       g.skierJumpY = 0;
       g.skierAirborne = false;
       g.skierJumpVY = 0;
-      spawnParticles(g.horseX + 120, g.lanes[g.skierLane], 8, '#d0e0f0');
+      spawnParticles(g.horseX - 130, g.lanes[g.skierLane], 8, '#d0e0f0');
     }
   }
 
@@ -400,10 +400,10 @@ function update() {
   g.horseLane = g.skierLane;
   g.horseY += (g.lanes[g.horseLane] - g.horseY) * 0.1;
 
-  // Snow spray behind skier
+  // Snow spray behind skier (to the left)
   if (g.time % 3 === 0 && !g.skierAirborne) {
     game.particles.push(new Particle(
-      g.horseX + 130, g.skierY + 10,
+      g.horseX - 140, g.skierY + 10,
       -1 - Math.random() * 2, -Math.random() * 2,
       15 + Math.random() * 10,
       '#c8d8e8',
@@ -422,8 +422,8 @@ function update() {
     ));
   }
 
-  // Obstacle collision
-  const skierWorldX = g.courseX + g.horseX + 120;
+  // Obstacle collision (skier is to the left of horse)
+  const skierWorldX = g.courseX + g.horseX - 130;
   g.obstacles.forEach(o => {
     if (o.hit || o.missed) return;
     const dx = skierWorldX - o.x;
@@ -693,16 +693,16 @@ function drawSkier(x, y, jumpY, airborne) {
   ctx.font = 'bold 8px monospace';
   ctx.fillText('07', -2, -1);
 
-  // Arms (holding rope)
+  // Arms (holding rope, reaching right toward horse)
   ctx.strokeStyle = '#e04040';
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(-4, -6);
-  ctx.lineTo(-18, -10);
+  ctx.moveTo(4, -6);
+  ctx.lineTo(18, -10);
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(8, -6);
-  ctx.lineTo(-14, -12);
+  ctx.lineTo(20, -12);
   ctx.stroke();
 
   // Head
@@ -740,10 +740,12 @@ function drawRope(hx, hy, sx, sy, jumpY) {
   ctx.strokeStyle = '#8a7a60';
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(hx - 20, hy + game.horseBob - 8);
-  const midX = (hx - 20 + sx - 18) / 2;
+  // From horse's tail/back area (left side of horse)
+  ctx.moveTo(hx - 26, hy + game.horseBob - 8);
+  const midX = (hx - 26 + sx + 18) / 2;
   const midY = (hy + sy + jumpY) / 2 + sag;
-  ctx.quadraticCurveTo(midX, midY, sx - 18, sy + jumpY - 10);
+  // To skier's right side (reaching toward horse)
+  ctx.quadraticCurveTo(midX, midY, sx + 18, sy + jumpY - 10);
   ctx.stroke();
 }
 
@@ -1048,16 +1050,18 @@ function draw() {
   // Particles (behind characters)
   g.particles.forEach(p => p.draw(ctx, 0));
 
-  // Rope
+  // Horse leads on the right, skier trails on the left
   const horseScreenX = g.horseX;
-  const skierScreenX = g.horseX + 120;
+  const skierScreenX = g.horseX - 130;
+
+  // Rope (from horse's tail back to skier's hands)
   drawRope(horseScreenX, g.horseY, skierScreenX, g.skierY, g.skierJumpY);
+
+  // Skier (draw first so horse overlaps slightly in front)
+  drawSkier(skierScreenX, g.skierY, g.skierJumpY, g.skierAirborne);
 
   // Horse
   drawHorse(horseScreenX, g.horseY, g.horseFrame, g.horseBob);
-
-  // Skier
-  drawSkier(skierScreenX, g.skierY, g.skierJumpY, g.skierAirborne);
 
   // Snowflakes
   ctx.fillStyle = '#fff';
