@@ -128,7 +128,7 @@ button:hover {
     <kbd>&uarr;</kbd> <kbd>&darr;</kbd> Steer &nbsp;&nbsp;
     <kbd>SPACE</kbd> Jump &nbsp;&nbsp;
     <kbd>R</kbd> Restart<br>
-    Mobile: Tap left/right to steer, tap center to jump
+    Mobile: Drag up/down to steer, tap to jump
   </div>
 </div>
 
@@ -1094,27 +1094,54 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
-// Touch controls for mobile
-let touchStartX = 0;
+// Touch controls for mobile: drag up/down to steer, tap to jump
+let touchStartY = 0;
+let touchDragging = false;
+let touchMoved = false;
+const DRAG_THRESHOLD = 15; // pixels before considered a drag vs tap
+const LANE_DRAG_THRESHOLD = 30; // pixels of drag to switch one lane
+
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   const touch = e.touches[0];
-  touchStartX = touch.clientX;
-  const W = canvas.width;
-  const x = touch.clientX;
-  if (x < W * 0.33) {
-    keys['ArrowUp'] = true;
-  } else if (x > W * 0.66) {
-    keys['ArrowDown'] = true;
-  } else {
-    keys[' '] = true;
+  touchStartY = touch.clientY;
+  touchDragging = false;
+  touchMoved = false;
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!game || game.finished || game.countdown > 0) return;
+  const touch = e.touches[0];
+  const dy = touch.clientY - touchStartY;
+
+  if (!touchDragging && Math.abs(dy) > DRAG_THRESHOLD) {
+    touchDragging = true;
+    touchMoved = true;
+  }
+
+  if (touchDragging) {
+    // Check how many lanes we've dragged past
+    const lanesShifted = Math.floor(Math.abs(dy) / LANE_DRAG_THRESHOLD);
+    if (lanesShifted > 0) {
+      if (dy > 0) {
+        keys['ArrowDown'] = true;
+      } else {
+        keys['ArrowUp'] = true;
+      }
+      // Reset drag origin so continuous dragging keeps switching lanes
+      touchStartY = touch.clientY;
+    }
   }
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => {
-  keys['ArrowUp'] = false;
-  keys['ArrowDown'] = false;
-  keys[' '] = false;
+  // If it wasn't a drag, it's a tap = jump
+  if (!touchMoved && game && !game.finished) {
+    keys[' '] = true;
+  }
+  touchDragging = false;
+  touchMoved = false;
 });
 </script>
 </body>
