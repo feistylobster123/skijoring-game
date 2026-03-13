@@ -1094,54 +1094,85 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('keyup', e => { keys[e.key] = false; });
 
-// Touch controls for mobile: drag up/down to steer, tap to jump
-let touchStartY = 0;
-let touchDragging = false;
-let touchMoved = false;
-const DRAG_THRESHOLD = 15; // pixels before considered a drag vs tap
-const LANE_DRAG_THRESHOLD = 30; // pixels of drag to switch one lane
+// Touch controls: multi-touch support
+// Finger 1 drags up/down to steer, any finger tap jumps
+// Can steer and jump simultaneously with two fingers
+const touches = {}; // track each finger by identifier
+const DRAG_THRESHOLD = 15;
+const LANE_DRAG_THRESHOLD = 30;
 
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  const touch = e.touches[0];
-  touchStartY = touch.clientY;
-  touchDragging = false;
-  touchMoved = false;
+  for (const touch of e.changedTouches) {
+    touches[touch.identifier] = {
+      startY: touch.clientY,
+      currentY: touch.clientY,
+      moved: false,
+      dragging: false
+    };
+  }
+
+  // A new finger arriving while another is already dragging = tap to jump
+  if (e.touches.length > 1 && game && !game.finished) {
+    const newTouch = e.changedTouches[0];
+    const info = touches[newTouch.identifier];
+    // If ANY other finger is already dragging, this new one is a jump tap
+    let otherDragging = false;
+    for (const t of e.touches) {
+      if (t.identifier !== newTouch.identifier && touches[t.identifier] && touches[t.identifier].dragging) {
+        otherDragging = true;
+        break;
+      }
+    }
+    if (otherDragging) {
+      keys[' '] = true;
+      info.moved = true; // mark so its touchend doesn't also fire jump
+    }
+  }
 }, { passive: false });
 
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
   if (!game || game.finished || game.countdown > 0) return;
-  const touch = e.touches[0];
-  const dy = touch.clientY - touchStartY;
 
-  if (!touchDragging && Math.abs(dy) > DRAG_THRESHOLD) {
-    touchDragging = true;
-    touchMoved = true;
-  }
+  for (const touch of e.changedTouches) {
+    const info = touches[touch.identifier];
+    if (!info) continue;
 
-  if (touchDragging) {
-    // Check how many lanes we've dragged past
-    const lanesShifted = Math.floor(Math.abs(dy) / LANE_DRAG_THRESHOLD);
-    if (lanesShifted > 0) {
-      if (dy > 0) {
-        keys['ArrowDown'] = true;
-      } else {
-        keys['ArrowUp'] = true;
+    info.currentY = touch.clientY;
+    const dy = touch.clientY - info.startY;
+
+    if (!info.dragging && Math.abs(dy) > DRAG_THRESHOLD) {
+      info.dragging = true;
+      info.moved = true;
+    }
+
+    if (info.dragging) {
+      const lanesShifted = Math.floor(Math.abs(dy) / LANE_DRAG_THRESHOLD);
+      if (lanesShifted > 0) {
+        if (dy > 0) {
+          keys['ArrowDown'] = true;
+        } else {
+          keys['ArrowUp'] = true;
+        }
+        info.startY = touch.clientY;
       }
-      // Reset drag origin so continuous dragging keeps switching lanes
-      touchStartY = touch.clientY;
     }
   }
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => {
-  // If it wasn't a drag, it's a tap = jump
-  if (!touchMoved && game && !game.finished) {
-    keys[' '] = true;
+  for (const touch of e.changedTouches) {
+    const info = touches[touch.identifier];
+    if (!info) continue;
+
+    // Single finger that didn't drag = tap = jump
+    if (!info.moved && game && !game.finished) {
+      keys[' '] = true;
+    }
+
+    delete touches[touch.identifier];
   }
-  touchDragging = false;
-  touchMoved = false;
 });
 </script>
 </body>
