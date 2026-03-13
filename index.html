@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telluride Skijoring</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a1a;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: 'Georgia', serif;
+  overflow: hidden;
+}
+canvas {
+  display: block;
+  border: 3px solid #4a3728;
+  border-radius: 4px;
+  box-shadow: 0 0 40px rgba(100,180,255,0.15);
+  cursor: none;
+}
+#ui {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+#title-screen, #game-over {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  pointer-events: all;
+}
+#title-screen {
+  background: linear-gradient(180deg, #1a2a4a 0%, #2a1a0a 100%);
+}
+#game-over {
+  background: rgba(10,10,26,0.92);
+  display: none;
+}
+h1 {
+  font-size: 3.5em;
+  color: #f0d090;
+  text-shadow: 3px 3px 0 #4a3728, 0 0 30px rgba(240,180,80,0.4);
+  letter-spacing: 4px;
+  margin-bottom: 8px;
+}
+h2 {
+  font-size: 1.4em;
+  color: #a0c0e0;
+  font-weight: normal;
+  margin-bottom: 40px;
+  letter-spacing: 2px;
+}
+.subtitle {
+  color: #c09060;
+  font-size: 1.1em;
+  margin-bottom: 30px;
+  text-align: center;
+  line-height: 1.6;
+  max-width: 500px;
+}
+button {
+  font-family: 'Georgia', serif;
+  font-size: 1.3em;
+  padding: 14px 50px;
+  background: linear-gradient(180deg, #c07030, #8a4a20);
+  color: #f0e0c0;
+  border: 2px solid #d09050;
+  border-radius: 6px;
+  cursor: pointer;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  pointer-events: all;
+}
+button:hover {
+  background: linear-gradient(180deg, #d08040, #a05a30);
+  transform: scale(1.05);
+}
+.controls {
+  color: #8090a0;
+  font-size: 0.9em;
+  margin-top: 30px;
+  text-align: center;
+  line-height: 2;
+}
+.controls kbd {
+  background: #2a3a4a;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #4a5a6a;
+  color: #c0d0e0;
+  font-family: monospace;
+}
+#final-stats {
+  color: #d0c0a0;
+  font-size: 1.2em;
+  text-align: center;
+  line-height: 2;
+  margin: 20px 0;
+}
+#final-stats .big { font-size: 2.5em; color: #f0d090; display: block; margin: 10px 0; }
+#final-stats .penalty { color: #e07060; }
+#final-stats .bonus { color: #60d080; }
+</style>
+</head>
+<body>
+
+<div id="title-screen">
+  <h1>SKIJORING</h1>
+  <h2>Telluride, Colorado</h2>
+  <div class="subtitle">
+    Race down Colorado Avenue pulled behind a galloping horse.<br>
+    Hit the jumps. Nail the gates. Grab the rings.<br>
+    Fastest time wins.
+  </div>
+  <button onclick="startGame()">RIDE</button>
+  <div class="controls">
+    <kbd>&uarr;</kbd> <kbd>&darr;</kbd> Steer &nbsp;&nbsp;
+    <kbd>SPACE</kbd> Jump &nbsp;&nbsp;
+    <kbd>R</kbd> Restart<br>
+    Mobile: Tap left/right to steer, tap center to jump
+  </div>
+</div>
+
+<div id="game-over">
+  <h1>FINISH</h1>
+  <div id="final-stats"></div>
+  <button onclick="startGame()">RIDE AGAIN</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// Responsive canvas
+function resize() {
+  const w = Math.min(window.innerWidth, 1200);
+  const h = Math.min(window.innerHeight, 700);
+  canvas.width = w;
+  canvas.height = h;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Game constants
+const COURSE_LENGTH = 6000; // pixels of course
+const LANE_COUNT = 3; // lanes: top, middle, bottom
+const GRAVITY = 0.6;
+const JUMP_FORCE = -12;
+
+// Game state
+let game = null;
+let keys = {};
+let animFrame = null;
+
+// Colors
+const SKY_TOP = '#1a2a5a';
+const SKY_BOTTOM = '#4a6a9a';
+const SNOW_COLOR = '#e8eef8';
+const MOUNTAIN_COLORS = ['#3a4a6a', '#4a5a7a', '#5a6a8a'];
+
+class Particle {
+  constructor(x, y, vx, vy, life, color, size) {
+    this.x = x; this.y = y;
+    this.vx = vx; this.vy = vy;
+    this.life = life; this.maxLife = life;
+    this.color = color; this.size = size;
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life--;
+    return this.life > 0;
+  }
+  draw(ctx, camX) {
+    const a = this.life / this.maxLife;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = this.color;
+    ctx.fillRect(this.x - camX, this.y, this.size, this.size);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function createGame() {
+  const W = canvas.width;
+  const H = canvas.height;
+  const groundY = H * 0.65;
+  const laneH = (H - groundY - 40) / LANE_COUNT;
+  const lanes = [];
+  for (let i = 0; i < LANE_COUNT; i++) {
+    lanes.push(groundY + 20 + laneH * i + laneH / 2);
+  }
+
+  // Generate obstacles
+  const obstacles = [];
+  const spacing = COURSE_LENGTH / 18;
+  for (let i = 1; i <= 16; i++) {
+    const x = 400 + spacing * i + (Math.random() - 0.5) * spacing * 0.3;
+    const lane = Math.floor(Math.random() * LANE_COUNT);
+    const r = Math.random();
+    let type;
+    if (r < 0.35) type = 'gate';
+    else if (r < 0.65) type = 'jump';
+    else type = 'ring';
+    obstacles.push({ x, lane, type, hit: false, missed: false });
+  }
+
+  // Generate snowflakes
+  const snowflakes = [];
+  for (let i = 0; i < 80; i++) {
+    snowflakes.push({
+      x: Math.random() * (COURSE_LENGTH + W),
+      y: Math.random() * groundY,
+      size: 1 + Math.random() * 3,
+      speed: 0.3 + Math.random() * 0.7,
+      drift: (Math.random() - 0.5) * 0.5
+    });
+  }
+
+  // Generate mountains
+  const mountains = [];
+  for (let layer = 0; layer < 3; layer++) {
+    const peaks = [];
+    const count = 8 + layer * 4;
+    for (let i = 0; i < count; i++) {
+      peaks.push({
+        x: (COURSE_LENGTH + W) * (i / count) - 100,
+        height: 80 + Math.random() * (120 - layer * 30),
+        width: 150 + Math.random() * 200 - layer * 40
+      });
+    }
+    mountains.push({ peaks, parallax: 0.05 + layer * 0.05, color: MOUNTAIN_COLORS[layer] });
+  }
+
+  // Generate crowd
+  const crowd = [];
+  for (let i = 0; i < 60; i++) {
+    crowd.push({
+      x: 200 + Math.random() * COURSE_LENGTH,
+      side: Math.random() < 0.5 ? 'top' : 'bottom',
+      color: `hsl(${Math.random()*360}, ${40+Math.random()*30}%, ${40+Math.random()*20}%)`,
+      height: 12 + Math.random() * 8,
+      cheer: Math.random() * Math.PI * 2
+    });
+  }
+
+  return {
+    W, H, groundY, lanes, laneH,
+    // Course
+    courseX: 0,
+    speed: 0,
+    maxSpeed: 8,
+    accel: 0.03,
+    // Horse
+    horseX: 150,
+    horseLane: 1,
+    horseY: lanes[1],
+    horseBob: 0,
+    horseFrame: 0,
+    // Skier
+    skierLane: 1,
+    skierY: lanes[1],
+    skierTargetY: lanes[1],
+    skierJumpVY: 0,
+    skierAirborne: false,
+    skierJumpY: 0, // offset from ground for jump
+    // Rope
+    ropeSlack: 0,
+    // Scoring
+    time: 0,
+    penalties: 0,
+    gatesHit: 0,
+    gatesTot: 0,
+    jumpsHit: 0,
+    jumpsTot: 0,
+    ringsHit: 0,
+    ringsTot: 0,
+    // State
+    started: false,
+    finished: false,
+    countdown: 180, // 3 seconds
+    finishTimer: 0,
+    distance: 0,
+    // Objects
+    obstacles,
+    snowflakes,
+    mountains,
+    crowd,
+    particles: [],
+    // Notifications
+    notifications: [],
+    // Count totals
+  };
+}
+
+function startGame() {
+  document.getElementById('title-screen').style.display = 'none';
+  document.getElementById('game-over').style.display = 'none';
+  game = createGame();
+  // Count obstacle types
+  game.obstacles.forEach(o => {
+    if (o.type === 'gate') game.gatesTot++;
+    if (o.type === 'jump') game.jumpsTot++;
+    if (o.type === 'ring') game.ringsTot++;
+  });
+  if (!animFrame) loop();
+}
+
+function addNotif(text, color, duration) {
+  game.notifications.push({ text, color, y: 0, life: duration || 60, maxLife: duration || 60 });
+}
+
+function spawnParticles(x, y, count, color) {
+  for (let i = 0; i < count; i++) {
+    game.particles.push(new Particle(
+      x, y,
+      (Math.random() - 0.5) * 4,
+      -Math.random() * 4,
+      20 + Math.random() * 20,
+      color,
+      2 + Math.random() * 3
+    ));
+  }
+}
+
+function update() {
+  if (!game || game.finished) return;
+  const g = game;
+
+  // Countdown
+  if (g.countdown > 0) {
+    g.countdown--;
+    return;
+  }
+
+  // Accelerate
+  if (g.speed < g.maxSpeed) {
+    g.speed += g.accel;
+    if (g.speed > g.maxSpeed) g.speed = g.maxSpeed;
+  }
+
+  // Increase speed slightly over time for excitement
+  if (g.maxSpeed < 12) g.maxSpeed += 0.001;
+
+  g.courseX += g.speed;
+  g.distance += g.speed;
+  g.time++;
+
+  // Horse animation
+  g.horseBob = Math.sin(g.time * 0.15) * 6;
+  g.horseFrame = (g.horseFrame + g.speed * 0.08) % 4;
+
+  // Skier lane switching
+  if (keys['ArrowUp'] || keys['w']) {
+    if (g.skierLane > 0 && !g.skierAirborne) g.skierLane--;
+    keys['ArrowUp'] = false; keys['w'] = false;
+  }
+  if (keys['ArrowDown'] || keys['s']) {
+    if (g.skierLane < LANE_COUNT - 1 && !g.skierAirborne) g.skierLane++;
+    keys['ArrowDown'] = false; keys['s'] = false;
+  }
+
+  // Jump
+  if ((keys[' '] || keys['ArrowUp_hold']) && !g.skierAirborne) {
+    g.skierJumpVY = JUMP_FORCE;
+    g.skierAirborne = true;
+    keys[' '] = false;
+    spawnParticles(g.horseX + 120 - g.courseX + g.courseX, g.skierY, 5, '#d0e0f0');
+  }
+
+  // Jump physics
+  if (g.skierAirborne) {
+    g.skierJumpY += g.skierJumpVY;
+    g.skierJumpVY += GRAVITY;
+    if (g.skierJumpY >= 0) {
+      g.skierJumpY = 0;
+      g.skierAirborne = false;
+      g.skierJumpVY = 0;
+      spawnParticles(g.horseX + 120, g.lanes[g.skierLane], 8, '#d0e0f0');
+    }
+  }
+
+  // Smooth lane movement
+  g.skierTargetY = g.lanes[g.skierLane];
+  g.skierY += (g.skierTargetY - g.skierY) * 0.15;
+
+  // Horse follows skier lane (with slight delay)
+  g.horseLane = g.skierLane;
+  g.horseY += (g.lanes[g.horseLane] - g.horseY) * 0.1;
+
+  // Snow spray behind skier
+  if (g.time % 3 === 0 && !g.skierAirborne) {
+    game.particles.push(new Particle(
+      g.horseX + 130, g.skierY + 10,
+      -1 - Math.random() * 2, -Math.random() * 2,
+      15 + Math.random() * 10,
+      '#c8d8e8',
+      2 + Math.random() * 2
+    ));
+  }
+
+  // Horse hoof particles
+  if (g.time % 4 === 0) {
+    game.particles.push(new Particle(
+      g.horseX + 10, g.horseY + g.horseBob + 18,
+      -1 - Math.random(), -Math.random() * 3,
+      10 + Math.random() * 8,
+      '#d0d8e0',
+      2
+    ));
+  }
+
+  // Obstacle collision
+  const skierWorldX = g.courseX + g.horseX + 120;
+  g.obstacles.forEach(o => {
+    if (o.hit || o.missed) return;
+    const dx = skierWorldX - o.x;
+    if (dx > -20 && dx < 30) {
+      const sameLane = g.skierLane === o.lane;
+      if (o.type === 'gate') {
+        if (sameLane && Math.abs(g.skierJumpY) < 10) {
+          o.hit = true;
+          g.gatesHit++;
+          addNotif('GATE!', '#60d080');
+          spawnParticles(o.x, g.lanes[o.lane], 10, '#60d080');
+        }
+      } else if (o.type === 'jump') {
+        if (sameLane && g.skierAirborne && g.skierJumpY < -15) {
+          o.hit = true;
+          g.jumpsHit++;
+          addNotif('JUMP!', '#60a0f0');
+          spawnParticles(o.x, g.lanes[o.lane] - 30, 15, '#60a0f0');
+        }
+      } else if (o.type === 'ring') {
+        if (sameLane && Math.abs(g.skierJumpY) < 20) {
+          o.hit = true;
+          g.ringsHit++;
+          addNotif('RING! -2s', '#f0d060');
+          spawnParticles(o.x, g.lanes[o.lane] - 20, 12, '#f0d060');
+        }
+      }
+    }
+    // Mark as missed if passed
+    if (dx > 50 && !o.hit) {
+      o.missed = true;
+      if (o.type === 'gate') { g.penalties += 5; addNotif('+5s MISSED GATE', '#e07060'); }
+      if (o.type === 'jump') { g.penalties += 5; addNotif('+5s MISSED JUMP', '#e07060'); }
+      // rings are bonus, no penalty for missing
+    }
+  });
+
+  // Update particles
+  g.particles = g.particles.filter(p => p.update());
+
+  // Update notifications
+  g.notifications = g.notifications.filter(n => {
+    n.life--;
+    n.y -= 0.5;
+    return n.life > 0;
+  });
+
+  // Snowflakes
+  g.snowflakes.forEach(s => {
+    s.y += s.speed;
+    s.x += s.drift;
+    if (s.y > g.groundY) { s.y = -5; s.x = g.courseX + Math.random() * g.W; }
+  });
+
+  // Crowd cheering
+  g.crowd.forEach(c => {
+    c.cheer += 0.05 + Math.random() * 0.02;
+  });
+
+  // Finish check
+  if (g.distance >= COURSE_LENGTH) {
+    g.finished = true;
+    showResults();
+  }
+}
+
+function showResults() {
+  const g = game;
+  const baseTime = (g.time / 60).toFixed(2);
+  const ringBonus = g.ringsHit * 2;
+  const finalTime = (parseFloat(baseTime) + g.penalties - ringBonus).toFixed(2);
+
+  const stats = document.getElementById('final-stats');
+  stats.innerHTML = `
+    <span class="big">${finalTime}s</span>
+    Base time: ${baseTime}s<br>
+    <span class="penalty">Penalties: +${g.penalties}s</span><br>
+    <span class="bonus">Ring bonus: -${ringBonus}s</span><br><br>
+    Gates: ${g.gatesHit}/${g.gatesTot} &nbsp;
+    Jumps: ${g.jumpsHit}/${g.jumpsTot} &nbsp;
+    Rings: ${g.ringsHit}/${g.ringsTot}
+  `;
+  document.getElementById('game-over').style.display = 'flex';
+}
+
+function drawMountains(g) {
+  g.mountains.forEach(layer => {
+    const px = g.courseX * layer.parallax;
+    ctx.fillStyle = layer.color;
+    ctx.beginPath();
+    ctx.moveTo(0, g.groundY - 60);
+    layer.peaks.forEach(p => {
+      const sx = p.x - px;
+      ctx.lineTo(sx, g.groundY - 60 - p.height);
+      ctx.lineTo(sx + p.width, g.groundY - 60);
+    });
+    ctx.lineTo(g.W, g.groundY - 60);
+    ctx.closePath();
+    ctx.fill();
+
+    // Snow caps
+    ctx.fillStyle = '#c0d0e8';
+    layer.peaks.forEach(p => {
+      const sx = p.x - px;
+      const peakY = g.groundY - 60 - p.height;
+      ctx.beginPath();
+      ctx.moveTo(sx + p.width * 0.3, peakY + p.height * 0.25);
+      ctx.lineTo(sx + p.width * 0.5, peakY);
+      ctx.lineTo(sx + p.width * 0.7, peakY + p.height * 0.2);
+      ctx.closePath();
+      ctx.fill();
+    });
+  });
+}
+
+function drawHorse(x, y, frame, bob) {
+  const f = Math.floor(frame) % 4;
+  const legOffsets = [
+    [0, 0, 0, 0],    // frame 0
+    [-4, 4, 4, -4],  // frame 1
+    [-6, 6, 6, -6],  // frame 2
+    [-2, 2, 2, -2],  // frame 3
+  ][f];
+
+  y += bob;
+
+  // Body
+  ctx.fillStyle = '#5a3a20';
+  ctx.beginPath();
+  ctx.ellipse(x, y - 8, 28, 14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Neck
+  ctx.fillStyle = '#5a3a20';
+  ctx.beginPath();
+  ctx.moveTo(x + 20, y - 18);
+  ctx.lineTo(x + 32, y - 35);
+  ctx.lineTo(x + 38, y - 30);
+  ctx.lineTo(x + 26, y - 12);
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = '#4a2a15';
+  ctx.beginPath();
+  ctx.ellipse(x + 38, y - 36, 10, 7, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mane
+  ctx.fillStyle = '#2a1a0a';
+  ctx.beginPath();
+  ctx.moveTo(x + 22, y - 20);
+  ctx.quadraticCurveTo(x + 28, y - 38, x + 35, y - 38);
+  ctx.lineTo(x + 30, y - 32);
+  ctx.quadraticCurveTo(x + 25, y - 30, x + 22, y - 20);
+  ctx.fill();
+
+  // Ear
+  ctx.fillStyle = '#5a3a20';
+  ctx.beginPath();
+  ctx.moveTo(x + 36, y - 42);
+  ctx.lineTo(x + 40, y - 50);
+  ctx.lineTo(x + 44, y - 42);
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = '#1a0a00';
+  ctx.beginPath();
+  ctx.arc(x + 42, y - 37, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Legs
+  ctx.strokeStyle = '#4a2a15';
+  ctx.lineWidth = 4;
+  // Front legs
+  ctx.beginPath();
+  ctx.moveTo(x + 15, y + 4);
+  ctx.lineTo(x + 15 + legOffsets[0], y + 22);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x + 20, y + 4);
+  ctx.lineTo(x + 20 + legOffsets[1], y + 22);
+  ctx.stroke();
+  // Back legs
+  ctx.beginPath();
+  ctx.moveTo(x - 15, y + 4);
+  ctx.lineTo(x - 15 + legOffsets[2], y + 22);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - 10, y + 4);
+  ctx.lineTo(x - 10 + legOffsets[3], y + 22);
+  ctx.stroke();
+
+  // Hooves
+  ctx.fillStyle = '#1a0a00';
+  [[15, legOffsets[0]], [20, legOffsets[1]], [-15, legOffsets[2]], [-10, legOffsets[3]]].forEach(([lx, lo]) => {
+    ctx.fillRect(x + lx + lo - 3, y + 20, 6, 4);
+  });
+
+  // Tail
+  ctx.strokeStyle = '#2a1a0a';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x - 26, y - 10);
+  ctx.quadraticCurveTo(x - 40, y - 5 + Math.sin(game.time * 0.1) * 5, x - 38, y + 5);
+  ctx.stroke();
+
+  // Rider
+  ctx.fillStyle = '#c04030';
+  ctx.beginPath();
+  ctx.ellipse(x, y - 26 + bob * 0.3, 8, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Rider head
+  ctx.fillStyle = '#d4a574';
+  ctx.beginPath();
+  ctx.arc(x + 2, y - 38 + bob * 0.3, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Cowboy hat
+  ctx.fillStyle = '#3a2a1a';
+  ctx.fillRect(x - 8, y - 46 + bob * 0.3, 20, 4);
+  ctx.fillRect(x - 4, y - 52 + bob * 0.3, 12, 7);
+}
+
+function drawSkier(x, y, jumpY, airborne) {
+  const drawY = y + jumpY;
+  const lean = airborne ? -0.2 : 0;
+
+  ctx.save();
+  ctx.translate(x, drawY);
+  ctx.rotate(lean);
+
+  // Skis
+  if (!airborne) {
+    ctx.fillStyle = '#d03030';
+    ctx.fillRect(-15, 16, 35, 3);
+    ctx.fillRect(-12, 14, 35, 3);
+  } else {
+    // Skis angled in air
+    ctx.save();
+    ctx.rotate(-0.15);
+    ctx.fillStyle = '#d03030';
+    ctx.fillRect(-15, 14, 35, 3);
+    ctx.restore();
+    ctx.save();
+    ctx.rotate(0.1);
+    ctx.fillStyle = '#d03030';
+    ctx.fillRect(-12, 16, 35, 3);
+    ctx.restore();
+  }
+
+  // Legs
+  ctx.fillStyle = '#2040a0';
+  ctx.fillRect(-3, 4, 5, 14);
+  ctx.fillRect(3, 4, 5, 14);
+
+  // Body
+  ctx.fillStyle = '#e04040';
+  ctx.beginPath();
+  ctx.ellipse(2, -4, 8, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Number bib
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(-4, -8, 12, 10);
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 8px monospace';
+  ctx.fillText('07', -2, -1);
+
+  // Arms (holding rope)
+  ctx.strokeStyle = '#e04040';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-4, -6);
+  ctx.lineTo(-18, -10);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(8, -6);
+  ctx.lineTo(-14, -12);
+  ctx.stroke();
+
+  // Head
+  ctx.fillStyle = '#d4a574';
+  ctx.beginPath();
+  ctx.arc(2, -18, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Goggles
+  ctx.fillStyle = '#f0a020';
+  ctx.fillRect(-3, -21, 12, 5);
+  ctx.fillStyle = '#204080';
+  ctx.fillRect(-1, -20, 4, 3);
+  ctx.fillRect(5, -20, 4, 3);
+
+  // Helmet
+  ctx.fillStyle = '#2040a0';
+  ctx.beginPath();
+  ctx.arc(2, -20, 7, Math.PI, 0);
+  ctx.fill();
+
+  ctx.restore();
+
+  // Shadow when airborne
+  if (airborne) {
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 18, 15 - jumpY * 0.1, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawRope(hx, hy, sx, sy, jumpY) {
+  const sag = game.skierAirborne ? -5 : 8;
+  ctx.strokeStyle = '#8a7a60';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(hx - 20, hy + game.horseBob - 8);
+  const midX = (hx - 20 + sx - 18) / 2;
+  const midY = (hy + sy + jumpY) / 2 + sag;
+  ctx.quadraticCurveTo(midX, midY, sx - 18, sy + jumpY - 10);
+  ctx.stroke();
+}
+
+function drawObstacle(o, camX, lanes) {
+  const sx = o.x - camX;
+  const sy = lanes[o.lane];
+  if (sx < -100 || sx > canvas.width + 100) return;
+
+  const alpha = o.hit ? 0.3 : o.missed ? 0.2 : 1;
+  ctx.globalAlpha = alpha;
+
+  if (o.type === 'gate') {
+    // Two poles with banner
+    ctx.fillStyle = '#d04040';
+    ctx.fillRect(sx - 25, sy - 30, 4, 50);
+    ctx.fillRect(sx + 22, sy - 30, 4, 50);
+    // Banner between poles
+    ctx.fillStyle = o.hit ? '#40a040' : '#d04040';
+    ctx.fillRect(sx - 25, sy - 30, 51, 8);
+    ctx.fillRect(sx - 25, sy - 18, 51, 4);
+    // Flag triangles
+    ctx.fillStyle = '#f0f0f0';
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.moveTo(sx - 23 + i * 12, sy - 30);
+      ctx.lineTo(sx - 17 + i * 12, sy - 22);
+      ctx.lineTo(sx - 11 + i * 12, sy - 30);
+      ctx.fill();
+    }
+    // Label
+    if (!o.hit && !o.missed) {
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('GATE', sx, sy - 33);
+    }
+  } else if (o.type === 'jump') {
+    // Snow ramp
+    ctx.fillStyle = '#c0d8f0';
+    ctx.beginPath();
+    ctx.moveTo(sx - 20, sy + 20);
+    ctx.lineTo(sx - 20, sy);
+    ctx.lineTo(sx + 15, sy - 15);
+    ctx.lineTo(sx + 20, sy + 20);
+    ctx.closePath();
+    ctx.fill();
+    // Ramp face
+    ctx.fillStyle = '#a0b8d0';
+    ctx.beginPath();
+    ctx.moveTo(sx - 20, sy);
+    ctx.lineTo(sx + 15, sy - 15);
+    ctx.lineTo(sx + 15, sy);
+    ctx.closePath();
+    ctx.fill();
+    // Marker flag
+    ctx.fillStyle = '#3060c0';
+    ctx.fillRect(sx + 14, sy - 35, 3, 22);
+    ctx.fillStyle = o.hit ? '#40a040' : '#f0a020';
+    ctx.beginPath();
+    ctx.moveTo(sx + 17, sy - 35);
+    ctx.lineTo(sx + 30, sy - 30);
+    ctx.lineTo(sx + 17, sy - 25);
+    ctx.fill();
+  } else if (o.type === 'ring') {
+    // Pole
+    ctx.fillStyle = '#806030';
+    ctx.fillRect(sx - 1, sy - 50, 3, 60);
+    // Ring
+    if (!o.hit) {
+      ctx.strokeStyle = '#f0c030';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(sx, sy - 50, 10, 0, Math.PI * 2);
+      ctx.stroke();
+      // Shine
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(sx - 3, sy - 53, 4, -0.5, 0.8);
+      ctx.stroke();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.textAlign = 'left';
+}
+
+function drawCrowd(g) {
+  g.crowd.forEach(c => {
+    const sx = c.x - g.courseX;
+    if (sx < -20 || sx > g.W + 20) return;
+    const baseY = c.side === 'top' ? g.groundY - 5 : g.H - 15;
+    const cheerY = Math.sin(c.cheer) * 2;
+
+    // Body
+    ctx.fillStyle = c.color;
+    ctx.fillRect(sx - 3, baseY - c.height + cheerY, 6, c.height);
+    // Head
+    ctx.fillStyle = '#d4a574';
+    ctx.beginPath();
+    ctx.arc(sx, baseY - c.height - 4 + cheerY, 4, 0, Math.PI * 2);
+    ctx.fill();
+    // Arms (cheering)
+    if (Math.sin(c.cheer) > 0.5) {
+      ctx.strokeStyle = c.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx - 3, baseY - c.height + 5 + cheerY);
+      ctx.lineTo(sx - 8, baseY - c.height - 5 + cheerY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(sx + 3, baseY - c.height + 5 + cheerY);
+      ctx.lineTo(sx + 8, baseY - c.height - 5 + cheerY);
+      ctx.stroke();
+    }
+  });
+}
+
+function drawHUD(g) {
+  const W = g.W;
+  // Time
+  const elapsed = (g.time / 60).toFixed(1);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(10, 10, 160, 80);
+  ctx.fillStyle = '#f0d090';
+  ctx.font = 'bold 28px Georgia';
+  ctx.fillText(elapsed + 's', 20, 42);
+  if (g.penalties > 0) {
+    ctx.fillStyle = '#e07060';
+    ctx.font = '16px Georgia';
+    ctx.fillText('+' + g.penalties + 's penalties', 20, 62);
+  }
+  if (g.ringsHit > 0) {
+    ctx.fillStyle = '#60d080';
+    ctx.font = '16px Georgia';
+    ctx.fillText('-' + (g.ringsHit * 2) + 's rings', 20, 80);
+  }
+
+  // Progress bar
+  const progress = Math.min(g.distance / COURSE_LENGTH, 1);
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(W - 210, 10, 200, 20);
+  ctx.fillStyle = '#c07030';
+  ctx.fillRect(W - 210, 10, 200 * progress, 20);
+  ctx.fillStyle = '#f0e0c0';
+  ctx.font = '12px Georgia';
+  ctx.textAlign = 'center';
+  ctx.fillText('COLORADO AVE', W - 110, 25);
+  ctx.textAlign = 'left';
+
+  // Stats
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(W - 210, 36, 200, 22);
+  ctx.font = '12px Georgia';
+  ctx.fillStyle = '#60d080';
+  ctx.fillText(`G:${g.gatesHit}/${g.gatesTot}`, W - 205, 52);
+  ctx.fillStyle = '#60a0f0';
+  ctx.fillText(`J:${g.jumpsHit}/${g.jumpsTot}`, W - 155, 52);
+  ctx.fillStyle = '#f0d060';
+  ctx.fillText(`R:${g.ringsHit}/${g.ringsTot}`, W - 105, 52);
+
+  // Speed indicator
+  ctx.fillStyle = '#8090a0';
+  ctx.font = '11px Georgia';
+  ctx.fillText(Math.round(g.speed * 4.5) + ' mph', W - 55, 52);
+
+  // Notifications
+  g.notifications.forEach((n, i) => {
+    const a = n.life / n.maxLife;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = n.color;
+    ctx.font = 'bold 22px Georgia';
+    ctx.textAlign = 'center';
+    ctx.fillText(n.text, W / 2, g.H * 0.3 + n.y - i * 30);
+    ctx.textAlign = 'left';
+  });
+  ctx.globalAlpha = 1;
+
+  // Countdown
+  if (g.countdown > 0) {
+    const num = Math.ceil(g.countdown / 60);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 0, W, g.H);
+    ctx.fillStyle = '#f0d090';
+    ctx.font = 'bold 120px Georgia';
+    ctx.textAlign = 'center';
+    ctx.fillText(num, W / 2, g.H / 2 + 30);
+    ctx.font = '24px Georgia';
+    ctx.fillStyle = '#a0c0e0';
+    ctx.fillText('GET READY', W / 2, g.H / 2 - 60);
+    ctx.textAlign = 'left';
+  }
+
+  // Lane indicators
+  if (g.countdown <= 0 && g.time < 180) {
+    ctx.globalAlpha = Math.max(0, 1 - g.time / 180);
+    ctx.fillStyle = '#8090a0';
+    ctx.font = '12px Georgia';
+    g.lanes.forEach((ly, i) => {
+      ctx.fillText(['TOP', 'MID', 'LOW'][i], 15, ly + 4);
+    });
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawFinishLine(g) {
+  const fx = COURSE_LENGTH + 400 - g.courseX;
+  if (fx < -50 || fx > g.W + 200) return;
+
+  // Checkered pattern
+  const sq = 10;
+  for (let row = 0; row < 8; row++) {
+    for (let col = 0; col < 3; col++) {
+      ctx.fillStyle = (row + col) % 2 === 0 ? '#ffffff' : '#000000';
+      ctx.fillRect(fx + col * sq, g.groundY - 10 + row * sq - 30, sq, sq);
+    }
+  }
+
+  // FINISH banner
+  ctx.fillStyle = '#c04040';
+  ctx.fillRect(fx - 30, g.groundY - 50, 90, 20);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px Georgia';
+  ctx.textAlign = 'center';
+  ctx.fillText('FINISH', fx + 15, g.groundY - 35);
+  ctx.textAlign = 'left';
+}
+
+function draw() {
+  if (!game) return;
+  const g = game;
+  const W = g.W;
+  const H = g.H;
+
+  // Sky gradient
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, g.groundY);
+  skyGrad.addColorStop(0, SKY_TOP);
+  skyGrad.addColorStop(1, SKY_BOTTOM);
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, g.groundY);
+
+  // Mountains
+  drawMountains(g);
+
+  // Ground
+  const groundGrad = ctx.createLinearGradient(0, g.groundY, 0, H);
+  groundGrad.addColorStop(0, '#d8e4f0');
+  groundGrad.addColorStop(0.3, SNOW_COLOR);
+  groundGrad.addColorStop(1, '#c0d0e0');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, g.groundY, W, H - g.groundY);
+
+  // Course track lines
+  ctx.strokeStyle = 'rgba(100,120,150,0.2)';
+  ctx.lineWidth = 1;
+  g.lanes.forEach(ly => {
+    ctx.beginPath();
+    ctx.moveTo(0, ly + 20);
+    ctx.lineTo(W, ly + 20);
+    ctx.stroke();
+  });
+
+  // Fence/barrier lines (top and bottom of course)
+  ctx.strokeStyle = '#8a7050';
+  ctx.lineWidth = 2;
+  [g.groundY + 8, H - 8].forEach(fy => {
+    ctx.beginPath();
+    ctx.moveTo(0, fy);
+    ctx.lineTo(W, fy);
+    ctx.stroke();
+    // Fence posts
+    for (let px = -g.courseX % 80; px < W; px += 80) {
+      ctx.fillStyle = '#6a5040';
+      ctx.fillRect(px, fy - 12, 3, 16);
+    }
+  });
+
+  // Telluride banner
+  const bannerX = 300 - g.courseX * 0.8;
+  if (bannerX > -200 && bannerX < W + 200) {
+    ctx.fillStyle = '#4a2a10';
+    ctx.fillRect(bannerX, g.groundY - 80, 4, 70);
+    ctx.fillRect(bannerX + 180, g.groundY - 80, 4, 70);
+    ctx.fillStyle = '#c04030';
+    ctx.fillRect(bannerX, g.groundY - 80, 184, 25);
+    ctx.fillStyle = '#f0e0c0';
+    ctx.font = 'bold 16px Georgia';
+    ctx.textAlign = 'center';
+    ctx.fillText('TELLURIDE SKIJORING', bannerX + 92, g.groundY - 62);
+    ctx.textAlign = 'left';
+  }
+
+  // Crowd (behind course)
+  drawCrowd(g);
+
+  // Obstacles
+  g.obstacles.forEach(o => drawObstacle(o, g.courseX, g.lanes));
+
+  // Finish line
+  drawFinishLine(g);
+
+  // Particles (behind characters)
+  g.particles.forEach(p => p.draw(ctx, 0));
+
+  // Rope
+  const horseScreenX = g.horseX;
+  const skierScreenX = g.horseX + 120;
+  drawRope(horseScreenX, g.horseY, skierScreenX, g.skierY, g.skierJumpY);
+
+  // Horse
+  drawHorse(horseScreenX, g.horseY, g.horseFrame, g.horseBob);
+
+  // Skier
+  drawSkier(skierScreenX, g.skierY, g.skierJumpY, g.skierAirborne);
+
+  // Snowflakes
+  ctx.fillStyle = '#fff';
+  g.snowflakes.forEach(s => {
+    const sx = s.x - g.courseX * 0.3;
+    if (sx > -5 && sx < W + 5) {
+      ctx.globalAlpha = 0.6;
+      ctx.beginPath();
+      ctx.arc(sx, s.y, s.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  ctx.globalAlpha = 1;
+
+  // HUD
+  drawHUD(g);
+}
+
+function loop() {
+  update();
+  draw();
+  animFrame = requestAnimationFrame(loop);
+}
+
+// Input handling
+document.addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' ') e.preventDefault();
+  if (e.key === 'r' || e.key === 'R') startGame();
+});
+document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// Touch controls for mobile
+let touchStartX = 0;
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const touch = e.touches[0];
+  touchStartX = touch.clientX;
+  const W = canvas.width;
+  const x = touch.clientX;
+  if (x < W * 0.33) {
+    keys['ArrowUp'] = true;
+  } else if (x > W * 0.66) {
+    keys['ArrowDown'] = true;
+  } else {
+    keys[' '] = true;
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  keys['ArrowUp'] = false;
+  keys['ArrowDown'] = false;
+  keys[' '] = false;
+});
+</script>
+</body>
+</html>
